@@ -1,25 +1,44 @@
+## Original project: https://github.com/c3p0vsr2d2/pge_scraper_hass
+## Modified to work with InfluxDB 1.8
+
 from selenium import webdriver
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
 import datetime
+import time
 import pytz
 import sys
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 
-# Configuration InfluxDB2
 INFLUX_URL = '<enter influx2 (IP + port)>'
 INFLUX_DB = '<enter influx2 DB name>'
-INFLUX_TOKEN = "<enter influx2 DB token>"
 INFLUX_ORG = "<enter influx organization>"
+
+
+# Configuration InfluxDB 1.8
+INFLUX_RETENTION_POLICY = "autogen"
+INFLUX_BUCKET = f'{INFLUX_DB}/{INFLUX_RETENTION_POLICY}'
+INFLUX_TOKEN = f'<auth_username>:auth_password'
+
+
+## Configuration InfluxDB2
+# INFLUX_TOKEN = "<enter influx2 DB token>"
+# INFLUX_BUCKET = INFLUX_DB
 
 # Selenium
 SELENIUM_URL = "<enter selenium (IP + port)>"
 
-MAX_RETRIES = 4;
+# PGE Account Info
+PGE_USERNAME = '< your pge username >'
+PGE_PASSWORD = '< your pge password >'
+PGE_ACCOUNT = '< your pge account number >' # 10 digit account number without the "-##"
 
-bucket = INFLUX_DB
+
+MAX_RETRIES = 1;
+
 client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
 write_api = client.write_api(write_options=SYNCHRONOUS)
 
@@ -29,7 +48,7 @@ chrome_options.add_argument("--disable-extensions")
 chrome_options.add_argument("--disable-infobars")
 chrome_options.add_argument("--start-maximized")
 chrome_options.add_argument("--disable-notifications")
-chrome_options.add_argument('--headless')
+# chrome_options.add_argument('--headless')
 chrome_options.add_argument('--no-sandbox')
 chrome_options.add_argument('--disable-dev-shm-usage')
 chrome_options.add_argument('--user-agent= Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:70.0) Gecko/20100101 Firefox/70.0');
@@ -37,72 +56,69 @@ chrome_options.add_argument('--user-agent= Mozilla/5.0 (Macintosh; Intel Mac OS 
 no_of_tries = 0
 while no_of_tries < MAX_RETRIES:
     try:
-        driver = webdriver.Remote(f"http://{SELENIUM_URL}/wd/hub", {'browserName': 'chrome'})
+        driver = webdriver.Remote(
+            command_executor=f"http://{SELENIUM_URL}/wd/hub",
+            options=chrome_options
+        )
 
         # LOGIN
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------
         print("Opening Selenium Session")
         driver.get("https://www.pge.com/")
+        time.sleep(5)
         #this was written before I remembered getpass().
-        user = "<enter PGE username>"
-        passwd = "<enter PGE password>"
-        elems = driver.find_element_by_id("username")
-        elems.send_keys(user)
-        elems = driver.find_element_by_id("password")
-        elems.send_keys(passwd)
+        elems = driver.find_element(By.ID, "username")
+        elems.send_keys(PGE_USERNAME)
+        elems = driver.find_element(By.ID, "password")
+        elems.send_keys(PGE_PASSWORD)
         driver.implicitly_wait(1)
-        elems.send_keys(Keys.RETURN)
-        print("Logging in...")
-        driver.implicitly_wait(30)
+        driver.find_element(By.ID, "home_login_submit").click()
+        print("Logging in")
+        time.sleep(7)
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
         # ENERGY USAGE PAGE
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------
-        print("Energy Usage Page")
+        print("Navigating to Energy Usage Page")
         ####### Open Energy Usage page
-        driver.get("https://m.pge.com/index.html#myusage/<enter PGE account#>")
-        driver.implicitly_wait(60)
-        print(f"Retrieved URL: {driver.current_url}")
-        # driver.find_element_by_xpath("/html/body/div[3]/div/div[3]/div/div/div[2]/div/div[2]/div/div[2]/div/div[2]/div/div/div[3]/div/div/div/div[1]/div/div[2]/div/div[1]/a/p[1]").click()
-        # driver.implicitly_wait(10)
+        driver.get(f"https://m.pge.com/index.html#myusage/{PGE_ACCOUNT}")
+        time.sleep(10)
+        # time.sleep(30)
         ####### Click on day-view
 
 
         # 1. HOURLY ELEC kWh (PAST DAY)
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+        print("Navigating to Day View")
         ####### Click on "Day View"
-        # driver.save_screenshot("screenshot.png")
-        driver.find_element_by_xpath("/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[1]/div/div[2]/div/select/option[3]").click()
-        driver.implicitly_wait(30)
+        driver.find_element(By. XPATH, "/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[1]/div/div[2]/div/select/option[3]").click()
+        time.sleep(7)
 
-        print("Date Referencing")
+        # print("Finding date on electricity usage page")
+        date_str = driver.find_element(By. XPATH, "/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[1]/div/div[3]/div/span").get_attribute('innerHTML')
 
-        print("Finding date on electricity usage page")
-        date_str = driver.find_element_by_xpath("/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[1]/div/div[3]/div/span").get_attribute('innerHTML')
-
-        elec_hourly_usage_table = driver.find_element_by_xpath("/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[2]/div/div[1]/table").get_attribute('innerHTML')
+        print("Collecting Hourly Electricity Usage")
+        time.sleep(2)
+        elec_hourly_usage_table = driver.find_element(By. XPATH, "/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[2]/div/div[1]/table").get_attribute('innerHTML')
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-        # 2. DAILT ELEC kWh, DAILY GAS THERMS (TWO WEEKS)
+        # 2. DAILY ELEC kWh, DAILY GAS THERMS (TWO WEEKS)
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------
-        print("Daily Electricity/Gas Usage")
-        driver.get("https://m.pge.com/index.html#myusage/<enter PGE account#>")
-        driver.implicitly_wait(30)
+        print("Collecting Daily Electricity/Gas Usage")
+        driver.get(f"https://m.pge.com/index.html#myusage/{PGE_ACCOUNT}")
+        time.sleep(7)
         ####### Click on "Combined"
-        # driver.find_element_by_xpath("//*[@id=\"widget-data-browser\"]/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[1]/div/div[1]/div[2]/div/ul/li[1]/button").click()
-        driver.find_element_by_xpath("/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[1]/div/div[1]/div[2]/div/ul/li[1]/button").click()
-        driver.implicitly_wait(30)
-        # ####### Click on "Bill View"
-        # driver.find_element_by_xpath("//*[@id=\"widget-data-browser\"]/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[1]/div/div[2]/div/select/option[2]").click()
-        # driver.implicitly_wait(40)
+        driver.find_element(By. XPATH, "/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[1]/div/div[1]/div[2]/div/ul/li[1]/button").click()
+        time.sleep(10)
 
-        elec_gas_daily_usage_table = driver.find_element_by_xpath("/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[2]/div/div[1]/table").get_attribute('innerHTML')
+        
+        elec_gas_daily_usage_table = driver.find_element(By. XPATH, "/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[2]/div/div[1]/table").get_attribute('innerHTML')
 
         ####### Click on "Previous Week"
-        # driver.find_element_by_xpath("/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[1]/div/div[3]/div/button[1]/svg").click()
+        # driver.find_element(By. XPATH, "/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[1]/div/div[3]/div/button[1]/svg").click()
         # driver.implicitly_wait(40)
-        # elec_gas_daily_usage_table_prev_week = driver.find_element_by_xpath("/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[2]/div/div[1]/table").get_attribute('innerHTML')
+        # elec_gas_daily_usage_table_prev_week = driver.find_element(By. XPATH, "/html/body/div[2]/div/div[1]/div[2]/div/div/div/opower-shadow-html/opower-shadow-body/div/div/div/div/div/div[2]/div/div[1]/table").get_attribute('innerHTML')
         # -----------------------------------------------------------------------------------------------------------------------------------------------------------------
         
         no_of_tries = MAX_RETRIES
@@ -163,7 +179,7 @@ try:
         writePoints_hourly.append(Point("pge_elec_hourly_meas").field("elec_usage_kWh", float(elec_hourly_usage[j])).time(timestamp))
         writePoints_hourly.append(Point("pge_elec_hourly_meas").field("weather_temp", float(elec_hourly_weather_data[j])).time(timestamp))
     # print(writePoints)
-    write_api.write(bucket=INFLUX_DB, record=writePoints_hourly)
+    write_api.write(bucket=INFLUX_BUCKET, record=writePoints_hourly)
 except Exception as e:
     print(e)
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -218,6 +234,8 @@ elec_gas_daily_temp_lo = [w.replace('Not available', '0') for w in elec_gas_dail
 
 # print(elec_gas_daily_gas_usage)
 
+print("Writing output to InfluxDB")
+
 writePoints_daily = []
 for j in range(len(elec_gas_daily_date_str)):
     timestamp = datetime.datetime.combine(datetime.datetime.strptime(elec_gas_daily_date_str[j], '%B %d, %Y'), datetime.time(12, 0, 0))
@@ -231,5 +249,9 @@ for j in range(len(elec_gas_daily_date_str)):
     writePoints_daily.append(Point("pge_elec_gas_daily_meas").field("weather_temp_hi", float(elec_gas_daily_temp_hi[j])).time(timestamp))
     writePoints_daily.append(Point("pge_elec_gas_daily_meas").field("weather_temp_lo", float(elec_gas_daily_temp_lo[j])).time(timestamp))
 # print(writePoints)
-write_api.write(bucket=INFLUX_DB, record=writePoints_daily)
+
+write_api.write(bucket=INFLUX_BUCKET, record=writePoints_daily)
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+print("Exiting")
+driver.quit()
